@@ -5,7 +5,7 @@ Code and checkpoints for the Odyssey 2026 paper:
 > **Subtract to Clean, Add to Enrich: Dual-Path Disentanglement for Speaker and Language Recognition**  
 > Aref Farhadipour — Odyssey 2026
 
-**Code:** [github.com/areffarhadi/ASV-LID](https://github.com/areffarhadi/ASV-LID)
+**Code:** [GitHub](https://github.com/areffarhadi/ASV-LID) · 🤗 [Hugging Face](https://huggingface.co/areffarhadi/w2v-bert-TidyVoice)
 
 This repository provides:
 
