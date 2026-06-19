@@ -1,0 +1,15 @@
+1	id010001/en/en_30308892.wav	en
+1	id010001/en/en_30308891.wav	en
+1	id010001/en/en_30308890.wav	en
+1	id010001/en/en_30308894.wav	en
+1	id010001/en/en_30308893.wav	en
+1	id010001/cy/cy_30309019.wav	cy
+1	id010001/cy/cy_30309003.wav	cy
+1	id010001/cy/cy_30308983.wav	cy
+1	id010001/cy/cy_30308912.wav	cy
+1	id010001/cy/cy_30308974.wav	cy
+1	id010001/cy/cy_30309036.wav	cy
+1	id010001/cy/cy_30308987.wav	cy
+1	id010001/cy/cy_30308945.wav	cy
+1	id010001/cy/cy_30308995.wav	cy
+1	id010001/cy/cy_30308985.wav	cy
