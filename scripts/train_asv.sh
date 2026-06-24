@@ -2,6 +2,10 @@
 set -euo pipefail
 source "$(dirname "$0")/../config/paths.sh"
 GPU=${1:-0}
+# PEFT adaptation mechanism (see README "Choosing the adaptation mechanism").
+# Default reproduces the paper: deep prompt tuning with wavelet-structured prompts.
+PEFT_MODE="${PEFT_MODE:-deep_prompt}"   # deep_prompt | shallow_prompt | prefix(EXPERIMENTAL)
+USE_WAVELET="${USE_WAVELET:-on}"        # on | off
 
 if [ -z "${TIDYVOICEX_TRAIN:-}" ] || [ -z "${TIDYVOICEX_DEV:-}" ]; then
   echo "Set TIDYVOICEX_TRAIN and TIDYVOICEX_DEV to your TidyVoiceX audio roots." >&2
@@ -30,5 +34,9 @@ cd "$REPO_ROOT/src/wpt"
   --compression_dim 128 \
   --embedding_dim 256 \
   --head_type dynstats_ecapa \
+  --peft_mode "$PEFT_MODE" \
+  --use_wavelet "$USE_WAVELET" \
   --use_arcface
 # Best checkpoint: copy to $CKPT_ASV after training
+# Switch finetuning method, e.g.:  PEFT_MODE=prefix bash scripts/train_asv.sh 0
+#   (run scripts/smoke_test_peft.py first to verify the experimental prefix mode)

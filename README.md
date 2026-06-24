@@ -130,6 +130,60 @@ bash scripts/eval_voxlingua_lid.sh 0
 6. `bash scripts/train_fusion_asv.sh [GPU]`
 7. `bash scripts/train_fusion_lid.sh [GPU]`
 
+## Choosing the adaptation mechanism (`--peft_mode`)
+
+The W2V-BERT-2.0 backbone is always **frozen**; only a lightweight adapter is
+trained (<1% of parameters). You can choose *how* the learnable vectors are
+injected, along two independent axes:
+
+| flag | options | meaning |
+|------|---------|---------|
+| `--peft_mode` | `deep_prompt` (default) · `shallow_prompt` · `prefix` | where the learnable vectors enter |
+| `--use_wavelet` | `on` (default) · `off` | Haar-wavelet-structured vectors, or raw |
+
+- **`deep_prompt`** — prompt tokens prepended to the input sequence of **every**
+  layer, dropped after each layer (VPT-Deep). **This is the mechanism used for
+  all results in the paper.**
+- **`shallow_prompt`** — prompt tokens added only **once**, at the first layer
+  (classic prompt tuning, Lester 2021).
+- **`prefix`** *(EXPERIMENTAL)* — learnable vectors injected as extra **Keys/Values
+  inside self-attention** only (no query, never through the FFN) — true
+  prefix-tuning (Li & Liang 2021). This performs surgery on the HF attention and
+  is version-sensitive; **verify it first** with the smoke test below.
+
+> **The paper corresponds to `--peft_mode deep_prompt --use_wavelet on`.** This
+> is the default, so released checkpoints and the standard pipeline are
+> unchanged. The other modes are provided so users can choose their finetuning
+> method; they have **no pretrained checkpoints** and must be trained from
+> scratch.
+
+**Switch the method** (all entry points — `main_train_asv_dynstats.py`,
+`main_train_lid.py` — accept the flags):
+
+```bash
+# classic (shallow) prompt tuning, no wavelet
+python src/wpt/main_train_asv_dynstats.py ... --peft_mode shallow_prompt --use_wavelet off
+
+# true prefix tuning (experimental)
+python src/wpt/main_train_asv_dynstats.py ... --peft_mode prefix
+
+# via the wrapper script (env-controlled)
+PEFT_MODE=prefix USE_WAVELET=on bash scripts/train_asv.sh 0
+```
+
+**Verify a mode before training** (especially `prefix`) — runs a tiny
+forward/backward for every mode on your `transformers` version:
+
+```bash
+python scripts/smoke_test_peft.py            # all modes
+python scripts/smoke_test_peft.py --modes prefix --cpu
+```
+
+All modes share one implementation in [`src/wpt/peft_wpt.py`](src/wpt/peft_wpt.py).
+To evaluate a checkpoint trained with a non-default mode, pass the same
+`--peft_mode` / `--use_wavelet` at eval time (the values are also saved inside
+the checkpoint).
+
 ## Layout
 
 ```

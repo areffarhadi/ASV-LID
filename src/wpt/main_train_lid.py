@@ -134,6 +134,9 @@ class LanguageIDModelWPTW2VBERTMHFA(nn.Module):
         head_dropout=0.1,
         arcface_margin=0.3,
         arcface_scale=30.0,
+        peft_mode="deep_prompt",
+        use_wavelet=True,
+        num_prefix_tokens=None,
     ):
         super().__init__()
         self.num_languages = num_languages
@@ -149,6 +152,9 @@ class LanguageIDModelWPTW2VBERTMHFA(nn.Module):
             num_wavelet_tokens=num_wavelet_tokens,
             prompt_dim=1024,
             dropout=prompt_dropout,
+            peft_mode=peft_mode,
+            use_wavelet=use_wavelet,
+            num_prefix_tokens=num_prefix_tokens,
         )
 
         num_layers = self.wpt_w2vbert.config.num_hidden_layers
@@ -303,6 +309,12 @@ def main():
     parser.add_argument("--num_prompt_tokens", type=int, default=6)
     parser.add_argument("--num_wavelet_tokens", type=int, default=4)
     parser.add_argument("--prompt_dropout", type=float, default=0.1)
+    # PEFT adaptation mechanism (see src/wpt/peft_wpt.py)
+    parser.add_argument("--peft_mode", type=str, default="deep_prompt",
+                        choices=["deep_prompt", "shallow_prompt", "prefix"],
+                        help="deep_prompt (default = paper) | shallow_prompt | prefix (EXPERIMENTAL)")
+    parser.add_argument("--use_wavelet", type=str, default="on", choices=["on", "off"])
+    parser.add_argument("--num_prefix_tokens", type=int, default=None)
     parser.add_argument("--num_heads", type=int, default=8)
     parser.add_argument("--compression_dim", type=int, default=128)
     parser.add_argument("--embedding_dim", type=int, default=256)
@@ -375,6 +387,9 @@ def main():
         head_dropout=args.head_dropout,
         arcface_margin=args.arcface_margin,
         arcface_scale=args.arcface_scale,
+        peft_mode=args.peft_mode,
+        use_wavelet=(args.use_wavelet == 'on'),
+        num_prefix_tokens=args.num_prefix_tokens,
     ).to(device)
 
     with open(os.path.join(args.out_fold, "language_mapping.json"), "w") as f:
@@ -503,6 +518,9 @@ def main():
                     "val_acc_macro": val_acc_macro,
                     "val_cl_acc_micro": val_cl_acc_micro,
                     "val_cl_acc_macro": val_cl_acc_macro,
+                    "peft_mode": args.peft_mode,
+                    "use_wavelet": (args.use_wavelet == 'on'),
+                    "num_prefix_tokens": args.num_prefix_tokens,
                 },
                 os.path.join(args.out_fold, "best_checkpoint.pt"),
             )

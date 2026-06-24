@@ -589,116 +589,12 @@ def evaluate_with_cached_embeddings(val_embeddings, val_filenames, trial_pairs, 
 
 
 
-class WaveletBlock(nn.Module):
-    """Wavelet transformation block for prompt tokens"""
-    def __init__(self, wave='haar', J=1, input_dim=1024, output_dim=1024):
-        super(WaveletBlock, self).__init__()
-        from pytorch_wavelets import DWTForward
-        self.dwt = DWTForward(J=J, wave=wave)
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-
-    def forward(self, x):
-        B, T, D = x.shape
-        assert D == self.input_dim
-        x = x.unsqueeze(dim=1)
-        LL, band = self.dwt(x)
-        bands = band[0]
-        LL = LL.unsqueeze(dim=2)
-        features = torch.cat((LL, bands), dim=2).view(B, -1, D)
-        return features
-
-
-class WPTW2VBERTMultiLayer(nn.Module):
-    """W2V-BERT-2.0 with WPT — extracts features from ALL layers."""
-    def __init__(self, model_dir, num_prompt_tokens=6, num_wavelet_tokens=4,
-                 prompt_dim=1024, dropout=0.1):
-        super().__init__()
-        self.num_prompt_tokens = num_prompt_tokens
-        self.num_wavelet_tokens = num_wavelet_tokens
-        self.prompt_dim = prompt_dim
-
-        self.config = AutoConfig.from_pretrained(model_dir)
-        self.processor = AutoFeatureExtractor.from_pretrained(model_dir)
-        self.model = Wav2Vec2BertModel.from_pretrained(model_dir)
-
-        # Freeze backbone
-        self.model.eval()
-        for param in self.model.parameters():
-            param.requires_grad = False
-
-        num_layers = self.config.num_hidden_layers
-
-        self.prompt_embeddings = nn.Parameter(
-            torch.zeros(num_layers, num_prompt_tokens, prompt_dim))
-        self.wavelet_prompt_embeddings = nn.Parameter(
-            torch.zeros(num_layers, num_wavelet_tokens, prompt_dim))
-        self.wavelet_block = WaveletBlock(wave='haar', J=1,
-                                          input_dim=prompt_dim,
-                                          output_dim=prompt_dim)
-        val = math.sqrt(6. / float(2 * prompt_dim))
-        nn.init.uniform_(self.prompt_embeddings.data, -val, val)
-        nn.init.uniform_(self.wavelet_prompt_embeddings.data, -val, val)
-        self.prompt_dropout = nn.Dropout(p=dropout)
-
-        print(f"  WPT + W2V-BERT-2.0 initialised:")
-        print(f"    Regular prompt tokens/layer: {num_prompt_tokens}")
-        print(f"    Wavelet prompt tokens/layer: {num_wavelet_tokens}")
-        print(f"    Total layers: {num_layers}")
-        print(f"    Feature dimension: {prompt_dim}")
-
-    def forward(self, audio_data):
-        original_device = audio_data.device
-        if isinstance(audio_data, torch.Tensor) and audio_data.is_cuda:
-            audio_data_cpu = audio_data.cpu().numpy()
-        else:
-            audio_data_cpu = audio_data
-            if isinstance(audio_data_cpu, torch.Tensor):
-                audio_data_cpu = audio_data_cpu.numpy()
-
-        processed = self.processor(audio_data_cpu, sampling_rate=16000,
-                                   return_tensors="pt")
-        if 'input_features' in processed:
-            feat = processed['input_features'].to(original_device)
-        elif hasattr(processed, 'input_features'):
-            feat = processed.input_features.to(original_device)
-        elif 'input_values' in processed:
-            feat = processed['input_values'].to(original_device)
-        else:
-            feat = list(processed.values())[0].to(original_device)
-
-        # Ensure feat is 3D: (B, T, D)
-        if feat.dim() > 3:
-            feat = feat.squeeze(0)   # e.g. (1, B, T, D) -> (B, T, D)
-        elif feat.dim() < 3:
-            feat = feat.unsqueeze(0) # e.g. (T, D) -> (1, T, D)  [batch_size=1]
-
-        batch_size = feat.size(0)
-        with torch.no_grad():
-            hidden_state, extract_features = self.model.feature_projection(feat)
-            hidden_state = self.model.encoder.dropout(hidden_state)
-
-        total_prompt_tokens = self.num_wavelet_tokens + self.num_prompt_tokens
-        layer_features = []
-
-        for layer_idx in range(self.config.num_hidden_layers):
-            prompt = self.prompt_embeddings[layer_idx].unsqueeze(0).expand(batch_size, -1, -1)
-            prompt = self.prompt_dropout(prompt)
-            wavelet_prompt = self.wavelet_prompt_embeddings[layer_idx].unsqueeze(0).expand(batch_size, -1, -1)
-            wavelet_prompt = self.wavelet_block(wavelet_prompt)
-            wavelet_prompt = self.prompt_dropout(wavelet_prompt)
-
-            if layer_idx == 0:
-                hidden_state = torch.cat([wavelet_prompt, prompt, hidden_state], dim=1)
-            else:
-                audio_features = hidden_state[:, total_prompt_tokens:, :]
-                hidden_state = torch.cat([wavelet_prompt, prompt, audio_features], dim=1)
-
-            hidden_state = self.model.encoder.layers[layer_idx](hidden_state)[0]
-            audio_only = hidden_state[:, total_prompt_tokens:, :].clone()
-            layer_features.append(audio_only)
-
-        return layer_features
+# WaveletBlock + WPTW2VBERTMultiLayer now live in peft_wpt.py so that the
+# adaptation mechanism (--peft_mode) and wavelet toggle (--use_wavelet) are
+# shared across entry points. The default (deep_prompt + wavelet) reproduces the
+# original behaviour byte-for-byte, with identical parameter names, so released
+# checkpoints load unchanged.
+from peft_wpt import WaveletBlock, WPTW2VBERTMultiLayer  # noqa: E402
 
 
 class MHFAHeadDynamicStats(nn.Module):
@@ -832,7 +728,8 @@ class SimpleSVModelWPTW2VBERTMHFA(nn.Module):
                  head_dropout=0.1, use_arcface=True, arcface_margin=0.3,
                  arcface_scale=30.0,
                  use_specaugment=False, time_mask_param=20, freq_mask_param=40,
-                 num_time_masks=2, num_freq_masks=2):
+                 num_time_masks=2, num_freq_masks=2,
+                 peft_mode="deep_prompt", use_wavelet=True, num_prefix_tokens=None):
         super().__init__()
 
         self.embedding_dim = embedding_dim
@@ -847,7 +744,10 @@ class SimpleSVModelWPTW2VBERTMHFA(nn.Module):
             num_prompt_tokens=num_prompt_tokens,
             num_wavelet_tokens=num_wavelet_tokens,
             prompt_dim=1024,
-            dropout=prompt_dropout)
+            dropout=prompt_dropout,
+            peft_mode=peft_mode,
+            use_wavelet=use_wavelet,
+            num_prefix_tokens=num_prefix_tokens)
 
         num_layers = self.wpt_w2vbert.config.num_hidden_layers
 
@@ -1063,6 +963,9 @@ def train(args):
         freq_mask_param=args.freq_mask_param,
         num_time_masks=args.num_time_masks,
         num_freq_masks=args.num_freq_masks,
+        peft_mode=args.peft_mode,
+        use_wavelet=(args.use_wavelet == 'on'),
+        num_prefix_tokens=args.num_prefix_tokens,
     ).to(device)
     if args.pretrain:
         if os.path.exists(args.pretrain):
@@ -1218,6 +1121,9 @@ def train(args):
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'eer': eer,
+                    'peft_mode': args.peft_mode,
+                    'use_wavelet': (args.use_wavelet == 'on'),
+                    'num_prefix_tokens': args.num_prefix_tokens,
                 }, os.path.join(args.out_fold, 'best_model.pt'))
                 print(f"  -> Saved best model (EER: {eer:.4f}%)")
 
@@ -1319,6 +1225,20 @@ if __name__ == '__main__':
                         choices=['dynstats', 'dynstats_ecapa'],
                         help='Head type for ablation')
     parser.add_argument('--head_dropout', type=float, default=0.1)
+
+    # PEFT adaptation mechanism (see src/wpt/peft_wpt.py)
+    parser.add_argument('--peft_mode', type=str, default='deep_prompt',
+                        choices=['deep_prompt', 'shallow_prompt', 'prefix'],
+                        help="How the learnable vectors enter the frozen backbone. "
+                             "'deep_prompt' (default) = the paper's mechanism; "
+                             "'shallow_prompt' = classic prompt tuning (input only); "
+                             "'prefix' = EXPERIMENTAL true prefix-tuning (verify with "
+                             "scripts/smoke_test_peft.py).")
+    parser.add_argument('--use_wavelet', type=str, default='on', choices=['on', 'off'],
+                        help="Haar-wavelet-structured prompts ('on', default) or raw ('off').")
+    parser.add_argument('--num_prefix_tokens', type=int, default=None,
+                        help="Prefix tokens/layer for --peft_mode prefix "
+                             "(default: num_prompt_tokens + num_wavelet_tokens).")
 
     # Loss parameters
     parser.add_argument('--use_arcface', action='store_true',
